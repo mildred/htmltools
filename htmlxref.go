@@ -115,6 +115,9 @@ func ensure_link(target, source, direction, kind string) error {
 	var lastText string
 	for {
 		tk := z.Next()
+		raw0 := z.Raw()
+		rawData := make([]byte, len(raw0))
+		copy(rawData, raw0)
 		if tk == html.ErrorToken {
 			err := z.Err()
 			if err != io.EOF {
@@ -173,7 +176,7 @@ func ensure_link(target, source, direction, kind string) error {
 			breadcrumb = breadcrumb[:len(breadcrumb)-1]
 		}
 
-		_, err = f2.Write(z.Raw())
+		_, err = f2.Write(rawData)
 		if err != nil {
 			e := os.Remove(f2.Name())
 			if e != nil {
