@@ -72,6 +72,7 @@ func xref(fname string) error {
 			}
 			break
 		}
+		//fmt.Printf("%v %v\n", tk, string(z.Raw()))
 		if tk == html.StartTagToken || tk == html.SelfClosingTagToken {
 			tagName, attrs := z.TagName()
 			breadcrumb = append(breadcrumb, string(tagName))
@@ -84,8 +85,9 @@ func xref(fname string) error {
 					target := filepath.Join(filepath.Dir(fname), href)
 					err := ensure_link(fname, target, reverse(direction), kind)
 					if err != nil && os.IsNotExist(err) {
-						fmt.Printf("Could not modify: %s\n", href)
-					} else {
+						fmt.Printf("      not modifiable\n")
+						err = nil
+					} else if err != nil {
 						return err
 					}
 				}
@@ -115,6 +117,7 @@ func ensure_link(target, source, direction, kind string) error {
 	if !strings.HasPrefix(line, "<!doctype") &&
 		!strings.HasPrefix(line, "<?xml") &&
 		!strings.HasPrefix(line, "<html") {
+		fmt.Printf("      not a HTML file\n")
 		return nil
 	}
 
