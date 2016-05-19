@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"flag"
 	"fmt"
 	"golang.org/x/net/html"
@@ -103,6 +104,24 @@ func ensure_link(target, source, direction, kind string) error {
 		return err
 	}
 	defer f.Close()
+
+	buf := bufio.NewReader(f)
+	line, err := buf.ReadString('\n')
+	if err != nil {
+		return err
+	}
+
+	line = strings.ToLower(line)
+	if !strings.HasPrefix(line, "<!doctype") &&
+		!strings.HasPrefix(line, "<?xml") &&
+		!strings.HasPrefix(line, "<html") {
+		return nil
+	}
+
+	_, err = f.Seek(0, 0)
+	if err != nil {
+		return err
+	}
 
 	f2, err := ioutil.TempFile(filepath.Dir(source), filepath.Base(target))
 	if err != nil {
