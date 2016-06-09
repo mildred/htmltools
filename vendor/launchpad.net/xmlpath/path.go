@@ -3,6 +3,7 @@ package xmlpath
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -11,8 +12,9 @@ import (
 // A single Path can be applied concurrently to any number
 // of context nodes.
 type Path struct {
-	path  string
-	steps []pathStep
+	path       string
+	steps      []pathStep
+	namespaces map[string]string
 }
 
 // Iter returns an iterator that goes over the list of nodes
@@ -353,23 +355,29 @@ type pathPredicate struct {
 }
 
 type pathStep struct {
-	root bool
-	axis string
-	name string
-	kind NodeKind
-	pred *pathPredicate
+	root   bool
+	axis   string
+	prefix string
+	space  string
+	name   string
+	kind   NodeKind
+	pred   *pathPredicate
 }
 
 func (step *pathStep) match(node *Node) bool {
 	return node.kind != EndNode &&
 		(step.kind == AnyNode || step.kind == node.kind) &&
-		(step.name == "*" || node.name.Local == step.name)
+		(step.name == "*" || (node.name.Local == step.name && node.name.Space == step.space))
 }
 
 // MustCompile returns the compiled path, and panics if
 // there are any errors.
 func MustCompile(path string) *Path {
-	e, err := Compile(path)
+	return MustCompileNS(path, nil)
+}
+
+func MustCompileNS(path string, ns map[string]string) *Path {
+	e, err := CompileNS(path, ns)
 	if err != nil {
 		panic(err)
 	}
@@ -378,11 +386,22 @@ func MustCompile(path string) *Path {
 
 // Compile returns the compiled path.
 func Compile(path string) (*Path, error) {
+	return CompileNS(path, nil)
+}
+
+func CompileNS(path string, ns map[string]string) (*Path, error) {
 	c := pathCompiler{path, 0}
 	if path == "" {
 		return nil, c.errorf("empty path")
 	}
-	p, err := c.parsePath()
+	if ns == nil {
+		ns = map[string]string{}
+	}
+	if _, ok := ns[""]; !ok {
+		ns[""] = ""
+	}
+	ns["xml"] = "http://www.w3.org/XML/1998/namespace"
+	p, err := c.parsePath(ns)
 	if err != nil {
 		return nil, err
 	}
@@ -398,11 +417,11 @@ func (c *pathCompiler) errorf(format string, args ...interface{}) error {
 	return fmt.Errorf("compiling xml path %q:%d: %s", c.path, c.i, fmt.Sprintf(format, args...))
 }
 
-func (c *pathCompiler) parsePath() (path *Path, err error) {
+func (c *pathCompiler) parsePath(ns map[string]string) (path *Path, err error) {
 	var steps []pathStep
 	var start = c.i
 	for {
-		step := pathStep{axis: "child"}
+		step := pathStep{axis: "child", prefix: ""}
 
 		if c.i == 0 && c.skipByte('/') {
 			step.root = true
@@ -419,7 +438,7 @@ func (c *pathCompiler) parsePath() (path *Path, err error) {
 				return nil, c.errorf("missing name after @")
 			}
 			step.axis = "attribute"
-			step.name = c.path[mark:c.i]
+			step.prefix, step.name = extractPrefix(c.path[mark:c.i])
 			step.kind = AttrNode
 		} else {
 			mark := c.i
@@ -495,7 +514,9 @@ func (c *pathCompiler) parsePath() (path *Path, err error) {
 					step.kind = StartNode
 				}
 			}
+			step.prefix, step.name = extractPrefix(step.name)
 		}
+		step.space = ns[step.prefix]
 		if c.skipByte('[') {
 			step.pred = &pathPredicate{}
 			if ival, ok := c.parseInt(); ok {
@@ -504,7 +525,7 @@ func (c *pathCompiler) parsePath() (path *Path, err error) {
 				}
 				step.pred.ival = ival
 			} else {
-				path, err := c.parsePath()
+				path, err := c.parsePath(ns)
 				if err != nil {
 					return nil, err
 				}
@@ -534,10 +555,19 @@ func (c *pathCompiler) parsePath() (path *Path, err error) {
 			if (start == 0 || start == c.i) && c.i < len(c.path) {
 				return nil, c.errorf("unexpected %q", c.path[c.i])
 			}
-			return &Path{steps: steps, path: c.path[start:c.i]}, nil
+			return &Path{steps: steps, path: c.path[start:c.i], namespaces: ns}, nil
 		}
 	}
 	panic("unreachable")
+}
+
+func extractPrefix(fullname string) (string, string) {
+	i := strings.Index(fullname, ":")
+	if i == -1 || i == len(fullname)-1 {
+		return "", fullname
+	} else {
+		return fullname[:i], fullname[i+1:]
+	}
 }
 
 var errNoLiteral = fmt.Errorf("expected a literal string")
@@ -595,6 +625,17 @@ func (c *pathCompiler) peekByte(b byte) bool {
 	return c.i < len(c.path) && c.path[c.i] == b
 }
 
+// Peek the Nth byte or return '\0'
+// N=1 means the next byte
+func (c *pathCompiler) peekN(offset int) byte {
+	i := c.i + offset - 1
+	if i >= len(c.path) {
+		return 0
+	} else {
+		return c.path[i]
+	}
+}
+
 func (c *pathCompiler) skipName() bool {
 	if c.i >= len(c.path) {
 		return false
@@ -606,6 +647,13 @@ func (c *pathCompiler) skipName() bool {
 	start := c.i
 	for c.i < len(c.path) && (c.path[c.i] >= utf8.RuneSelf || isNameByte(c.path[c.i])) {
 		c.i++
+	}
+	// Allow namespace separator once
+	if c.peekN(1) == ':' && (c.peekN(2) >= utf8.RuneSelf || isNameByte(c.peekN(2))) {
+		c.i++
+		for c.i < len(c.path) && (c.path[c.i] >= utf8.RuneSelf || isNameByte(c.path[c.i])) {
+			c.i++
+		}
 	}
 	return c.i > start
 }

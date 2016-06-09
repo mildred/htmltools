@@ -80,13 +80,74 @@ func (n *Node) Kind() NodeKind {
 
 // Format to XML
 func (n *Node) XML() []byte {
+	if n.up == nil {
+		return n.toXML(nil)
+	} else {
+		return n.toXML(n.up.FindNamespaces())
+	}
+}
+
+func findNS(ns map[string]string, nsuri string) string {
+	res := ""
+	for k, v := range ns {
+		if v == nsuri {
+			return k
+		}
+		//res += "[" + k + "=" + v + "]?"
+	}
+	//res += nsuri
+	return res
+}
+
+func (n *Node) FindNamespaces() map[string]string {
+	var ns map[string]string = nil
+	if n.up != nil {
+		ns = n.up.FindNamespaces()
+	}
+	return n.namespaces(ns)
+}
+
+func (n *Node) namespaces(ns map[string]string) map[string]string {
+	if n.kind != StartNode {
+		return ns
+	}
+
+	var res map[string]string = map[string]string{
+		"xml": "http://www.w3.org/XML/1998/namespace",
+		"":    "",
+	}
+	if ns != nil {
+		for k, v := range ns {
+			res[k] = v
+		}
+	}
+
+	for i := n.pos + 1; i < n.end; i += 1 {
+		if n.nodes[i].kind != AttrNode {
+			break
+		}
+		c := n.nodes[i]
+		if c.name.Space == "" && c.name.Local == "xmlns" {
+			res[""] = c.attr
+		} else if c.name.Space == "xmlns" {
+			res[c.name.Local] = c.attr
+		}
+	}
+
+	return res
+}
+
+// ns0: map[nstag]nsuri
+func (n *Node) toXML(ns0 map[string]string) []byte {
 	var res []byte
+	ns := n.namespaces(ns0)
+
 	switch n.kind {
 	case StartNode:
 		if n.name.Local != "" {
 			res = append(res, '<')
-			if n.name.Space != "" {
-				res = append(res, []byte(n.name.Space)...)
+			if nstag := findNS(ns, n.name.Space); nstag != "" {
+				res = append(res, []byte(nstag)...)
 				res = append(res, ':')
 			}
 			res = append(res, []byte(n.name.Local)...)
@@ -95,25 +156,19 @@ func (n *Node) XML() []byte {
 					break
 				}
 				res = append(res, ' ')
-				res = append(res, n.nodes[i].XML()...)
-			}
-			for _, c := range n.down {
-				if c.kind == AttrNode {
-					res = append(res, ' ')
-					res = append(res, c.XML()...)
-				}
+				res = append(res, n.nodes[i].toXML(ns)...)
 			}
 			res = append(res, '>')
 		}
 		for _, c := range n.down {
 			if c.kind != AttrNode {
-				res = append(res, c.XML()...)
+				res = append(res, c.toXML(ns)...)
 			}
 		}
 		if n.name.Local != "" {
 			res = append(res, '<', '/')
-			if n.name.Space != "" {
-				res = append(res, []byte(n.name.Space)...)
+			if nstag := findNS(ns, n.name.Space); nstag != "" {
+				res = append(res, []byte(nstag)...)
 				res = append(res, ':')
 			}
 			res = append(res, []byte(n.name.Local)...)
@@ -124,8 +179,8 @@ func (n *Node) XML() []byte {
 		sn := n.nodes[n.end]
 		if sn.name.Local != "" {
 			res = append(res, '<', '/')
-			if sn.name.Space != "" {
-				res = append(res, []byte(sn.name.Space)...)
+			if nstag := findNS(ns, sn.name.Space); nstag != "" {
+				res = append(res, []byte(nstag)...)
 				res = append(res, ':')
 			}
 			res = append(res, []byte(sn.name.Local)...)
@@ -133,8 +188,8 @@ func (n *Node) XML() []byte {
 		}
 		return res
 	case AttrNode:
-		if n.name.Space != "" {
-			res = append(res, []byte(n.name.Space)...)
+		if nstag := findNS(ns, n.name.Space); nstag != "" {
+			res = append(res, []byte(nstag)...)
 			res = append(res, ':')
 		}
 		res = append(res, []byte(n.name.Local)...)

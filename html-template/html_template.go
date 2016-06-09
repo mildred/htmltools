@@ -115,7 +115,7 @@ func handleTags(curdir string, r io.Reader, w io.Writer) error {
 					if err != nil {
 						return err
 					}
-					raw, err = evalTemplate(curdir, src.Val, ".", template, mapping)
+					raw, err = evalTemplate(curdir, src.Val, template, mapping)
 					if err != nil {
 						return err
 					}
@@ -140,8 +140,7 @@ var (
 
 // curdir: directory where the template file is
 // src:    data source relative to curdir
-// base:   ?
-func evalTemplate(curdir, src, base string, template, mapping []byte) ([]byte, error) {
+func evalTemplate(curdir, src string, template, mapping []byte) ([]byte, error) {
 	var err error
 
 	srcfile := src
@@ -167,7 +166,7 @@ func evalTemplate(curdir, src, base string, template, mapping []byte) ([]byte, e
 	}
 	t := tt.Ref
 
-	err = runTemplate(curdir, src, base, p, in, t)
+	err = runTemplate(curdir, src, p, in, t)
 	if err != nil && err != io.EOF {
 		return nil, err
 	}
@@ -175,7 +174,7 @@ func evalTemplate(curdir, src, base string, template, mapping []byte) ([]byte, e
 	return t.Node.XML(), nil
 }
 
-func runTemplate(curdir, src, base string, p *parser.Parser, in *xmlpath.Node, t *xmlpath.NodeRef) error {
+func runTemplate(curdir, src string, p *parser.Parser, in *xmlpath.Node, t *xmlpath.NodeRef) error {
 	depth := p.Depth()
 
 	log("\nTemplating %#v\nfrom:  %#v\nusing: %#v\n\n", string(src), string(in.XML()), string(t.Node.XML()))
@@ -194,6 +193,8 @@ func runTemplate(curdir, src, base string, p *parser.Parser, in *xmlpath.Node, t
 
 		if p.IsStartTag() && p.Data() == "map" {
 			log("Mapping: %#v\n\n", string(p.Token().String()))
+			var namespaces map[string]string = nil
+			// FIXME: namespaces
 			var frompath, topath *xmlpath.Path
 			from := p.Attr("from")
 			to := p.Attr("to")
@@ -204,7 +205,7 @@ func runTemplate(curdir, src, base string, p *parser.Parser, in *xmlpath.Node, t
 			onlyif := p.Attr("only-if")
 
 			if to != nil {
-				topath, err = xmlpath.Compile(to.Val)
+				topath, err = xmlpath.CompileNS(to.Val, namespaces)
 				if err != nil {
 					return err
 				}
@@ -227,7 +228,7 @@ func runTemplate(curdir, src, base string, p *parser.Parser, in *xmlpath.Node, t
 			}
 
 			if from != nil {
-				frompath, err = xmlpath.Compile(from.Val)
+				frompath, err = xmlpath.CompileNS(from.Val, namespaces)
 				if err != nil {
 					return err
 				}
@@ -237,6 +238,7 @@ func runTemplate(curdir, src, base string, p *parser.Parser, in *xmlpath.Node, t
 
 			if nodes == nil && frompath != nil {
 				log("  frompath: %s\n", from.Val)
+				log("  frompath: %#v\n", string(in.XML()))
 				i := frompath.Iter(in)
 				for i.Next() {
 					nodes = append(nodes, *i.Node())
@@ -248,6 +250,9 @@ func runTemplate(curdir, src, base string, p *parser.Parser, in *xmlpath.Node, t
 			if nodes == nil && dataattr != nil && dataattr.Val == "relative-url" {
 				n := xmlpath.CreateTextNode([]byte(src))
 				nodes = append(nodes, n)
+			} else if nodes == nil && dataattr != nil && dataattr.Val == "relative-dir" {
+				n := xmlpath.CreateTextNode([]byte(filepath.Dir(src) + "/"))
+				nodes = append(nodes, n)
 			}
 
 			if format != nil {
@@ -257,7 +262,7 @@ func runTemplate(curdir, src, base string, p *parser.Parser, in *xmlpath.Node, t
 					nodes = nil
 					break
 				case "link-relative":
-					data, err := relurl.UrlJoinString(filepath.Join(base, filepath.Dir(src)), string(nodesToText(nodes)), curdir)
+					data, err := relurl.UrlJoinString(filepath.Dir(src), string(nodesToText(nodes)), curdir)
 					if err != nil {
 						return err
 					}
@@ -298,7 +303,7 @@ func runTemplate(curdir, src, base string, p *parser.Parser, in *xmlpath.Node, t
 					return err
 				}
 
-				err = runTemplate(curdir, newsrc, base, p, in, t)
+				err = runTemplate(curdir, newsrc, p, in, t)
 				if err != nil {
 					return err
 				}
@@ -306,6 +311,7 @@ func runTemplate(curdir, src, base string, p *parser.Parser, in *xmlpath.Node, t
 			}
 
 			if topath != nil && nodes != nil {
+				// FIXME: set xml:base
 				matches := topath.Iter(t.Node).Nodes()
 				log("%d to matches: %#v\n", len(matches), to.Val)
 				for _, tnode := range matches {
@@ -316,7 +322,7 @@ func runTemplate(curdir, src, base string, p *parser.Parser, in *xmlpath.Node, t
 							n := tnode.Node.Copy().Ref
 							//log("Insert %#v\n", string(n.Node.XML()))
 							//log(" before %#v\n", string(tnode.Node.XML()))
-							err := runTemplate(curdir, src, base, p, &inode, n)
+							err := runTemplate(curdir, src, p, &inode, n)
 							if err != nil {
 								return err
 							}

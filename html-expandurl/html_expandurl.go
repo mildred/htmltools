@@ -14,7 +14,16 @@ import (
 
 func main() {
 	flag.Parse()
+	chdir := flag.String("C", "", "Change directory before operation")
 	infile := flag.Arg(0)
+
+	if *chdir != "" {
+		err := os.Chdir(*chdir)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err.Error())
+			os.Exit(1)
+		}
+	}
 
 	if infile == "-" {
 		infile = ""
