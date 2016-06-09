@@ -96,6 +96,16 @@ func (p *Parser) Attr(name string) *html.Attribute {
 }
 
 // Return the named attribute
+func (p *Parser) AttrVal(name, defval string) string {
+	a := Attr(p.t, name)
+	if a == nil {
+		return defval
+	} else {
+		return a.Val
+	}
+}
+
+// Return the named attribute
 func Attr(t *html.Token, name string) *html.Attribute {
 	for _, a := range t.Attr {
 		if a.Key == name {
@@ -113,6 +123,11 @@ func (p *Parser) Raw() []byte {
 // Return the current breadcrumb
 func (p *Parser) Breadcrumb() []string {
 	return p.d.Breadcrumb
+}
+
+// Current depth
+func (p *Parser) Depth() int {
+	return len(p.d.Breadcrumb)
 }
 
 // On a start tag, skip until the end tag and return the raw content

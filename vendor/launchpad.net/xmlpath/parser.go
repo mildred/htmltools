@@ -64,6 +64,16 @@ const (
 	ProcInstNode
 )
 
+func (n *Node) Copy() *Node {
+	nodes := append([]Node{}, n.extract()...)
+	for i := range nodes {
+		nodes[i].Ref = nil
+		nodes[i].text = append([]byte{}, nodes[i].text...)
+	}
+	refresh(nodes)
+	return nodes[0].Ref.Node
+}
+
 func (n *Node) Kind() NodeKind {
 	return n.kind
 }
@@ -212,26 +222,98 @@ func (n *Node) numattributes() int {
 	return numattr
 }
 
-// Set the children nodes
+// Set the children nodes (make a copy of them)
 // (and the node will become invalid, you should use n.Ref.Node instead)
 func (n *Node) SetChildren(nodes ...Node) {
 	switch n.kind {
 	case StartNode:
-		var nodelist []Node
+		var nodelist, nodelist2 []Node
 		numattr := n.numattributes()
 		nodelist = append(nodelist, n.nodes[:n.pos+numattr+1]...)
 		for _, nn := range nodes {
-			if nn.kind == StartNode {
-				nodelist = append(nodelist, nn.nodes[nn.pos:nn.end+1]...)
-			} else {
-				nodelist = append(nodelist, nn.nodes[nn.pos:nn.end]...)
-			}
+			nodelist2 = append(nodelist2, nn.extract()...)
 		}
+		for i := range nodelist2 {
+			nodelist2[i].Ref = nil
+		}
+		nodelist = append(nodelist, nodelist2...)
 		nodelist = append(nodelist, n.nodes[n.end:]...)
 		refresh(nodelist)
 		break
 	default:
 	}
+}
+
+// Delete current node
+func (n *Node) Remove() {
+	var nodelist []Node
+	nodelist = append(nodelist, n.nodes[:n.pos]...)
+	if n.kind == StartNode {
+		nodelist = append(nodelist, n.nodes[n.end+1:]...)
+	} else {
+		nodelist = append(nodelist, n.nodes[n.pos+1:]...)
+	}
+	refresh(nodelist)
+}
+
+func (n *Node) extract() []Node {
+	if n.kind == StartNode {
+		return n.nodes[n.pos : n.end+1]
+	} else {
+		return n.nodes[n.pos:n.end]
+	}
+}
+
+func (n *Node) Replace(nodes ...Node) {
+	var nodelist, nodelist2 []Node
+	nodelist = append(nodelist, n.nodes[:n.pos]...)
+	for _, nn := range nodes {
+		nodelist2 = append(nodelist2, nn.extract()...)
+	}
+	for i := range nodelist2 {
+		nodelist2[i].Ref = nil
+	}
+	nodelist = append(nodelist, nodelist2...)
+	if n.kind == StartNode {
+		nodelist = append(nodelist, n.nodes[n.end+1:]...)
+	} else {
+		nodelist = append(nodelist, n.nodes[n.pos+1:]...)
+	}
+	refresh(nodelist)
+}
+
+func (n *Node) InsertBefore(nodes ...Node) {
+	var nodelist, nodelist2 []Node
+	nodelist = append(nodelist, n.nodes[:n.pos]...)
+	for _, nn := range nodes {
+		nodelist2 = append(nodelist2, nn.extract()...)
+	}
+	for i := range nodelist2 {
+		nodelist2[i].Ref = nil
+	}
+	nodelist = append(nodelist, nodelist2...)
+	nodelist = append(nodelist, n.nodes[n.pos:]...)
+	refresh(nodelist)
+}
+
+func (n *Node) InsertAfter(nodes ...Node) {
+	var after int
+	var nodelist, nodelist2 []Node
+	if n.kind == StartNode {
+		after = n.end + 1
+	} else {
+		after = n.pos + 1
+	}
+	nodelist = append(nodelist, n.nodes[:after]...)
+	for _, nn := range nodes {
+		nodelist2 = append(nodelist2, nn.extract()...)
+	}
+	for i := range nodelist2 {
+		nodelist2[i].Ref = nil
+	}
+	nodelist = append(nodelist, nodelist2...)
+	nodelist = append(nodelist, n.nodes[after:]...)
+	refresh(nodelist)
 }
 
 // Set the bytes of a node
@@ -407,6 +489,9 @@ func ParseDecoder(d *xml.Decoder) (*Node, error) {
 		}
 	}
 
+	// Close the root node.
+	nodes = append(nodes, Node{kind: EndNode})
+
 	node := refresh(nodes)
 
 	if node == nil {
@@ -419,9 +504,6 @@ func ParseDecoder(d *xml.Decoder) (*Node, error) {
 // Refresh all nodes in relation to each other
 // Return the root node (or nil if there is a problem)
 func refresh(nodes []Node) *Node {
-	// Close the root node.
-	nodes = append(nodes, Node{kind: EndNode})
-
 	stack := make([]*Node, 0, len(nodes))
 	downs := make([]*Node, len(nodes))
 	downCount := 0

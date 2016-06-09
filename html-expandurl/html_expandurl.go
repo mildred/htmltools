@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"github.com/mildred/htmltools/relurl"
 	"golang.org/x/net/html"
 	"io"
 	"net/url"
@@ -37,64 +38,6 @@ func readAttributeXmlBase(z *html.Tokenizer, attrs bool) (src string) {
 		}
 	}
 	return
-}
-
-func urlJoinString(uBase, u, cwd string) (string, error) {
-	ub, err := url.Parse(uBase)
-	if err != nil {
-		return "", err
-	}
-	uu, err := url.Parse(u)
-	if err != nil {
-		return "", err
-	}
-	return urlJoin(ub, uu, cwd)
-}
-
-func urlJoin(uBase, u *url.URL, cwd string) (string, error) {
-	if u.Scheme != "" {
-		return u.String(), nil
-	}
-	u.Scheme = uBase.Scheme
-	if uBase.Opaque != "" {
-		u.Opaque = uBase.Opaque
-		return u.String(), nil
-	}
-	if u.Host != "" {
-		return u.String(), nil
-	}
-	u.User = uBase.User
-	u.Host = uBase.Host
-	if u.Path != "" && strings.HasPrefix(u.Path, "/") {
-		return u.String(), nil
-	}
-	if u.Path != "" {
-		uPath := u.Path
-		u.Path = filepath.Join(uBase.Path, u.Path)
-		if u.Scheme == "" && u.User == nil && u.Host == "" && cwd != "" {
-			// Pure path
-			base := uBase.Path
-			if !strings.HasPrefix(base, "/") {
-				//fmt.Fprintf(os.Stderr, "base = Join(%#v, %#v)) = %#v\n", cwd, base, filepath.Join(cwd, base))
-				base = filepath.Join(cwd, base)
-			}
-			rel, err := filepath.Rel(cwd, filepath.Join(base, uPath))
-			//fmt.Fprintf(os.Stderr, "Rel(%#v, Join(%#v, %#v)) = %#v\n", cwd, base, uPath, rel)
-			if err != nil {
-				return "", err
-			}
-			u.Path = rel
-		}
-	}
-	if u.RawQuery != "" {
-		return u.String(), nil
-	}
-	u.RawQuery = uBase.RawQuery
-	if u.Fragment != "" {
-		return u.String(), nil
-	}
-	u.Fragment = uBase.Fragment
-	return u.String(), nil
 }
 
 func handleTags(curdir, infile string, f2 io.Writer) error {
@@ -208,7 +151,7 @@ func handleTags(curdir, infile string, f2 io.Writer) error {
 							}
 							u2 := u.String()
 						*/
-						u2, err := urlJoin(baseUrl, u, abscurdir)
+						u2, err := relurl.UrlJoin(baseUrl, u, abscurdir)
 						if err != nil {
 							return err
 						}
