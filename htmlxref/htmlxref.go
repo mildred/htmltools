@@ -131,6 +131,7 @@ func ensure_link(target, source, direction, kind string) error {
 		return err
 	}
 	defer f2.Close()
+	defer os.Remove(f2.Name())
 
 	z := html.NewTokenizer(f)
 	var breadcrumb []string

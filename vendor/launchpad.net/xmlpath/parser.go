@@ -2,6 +2,7 @@ package xmlpath
 
 import (
 	"encoding/xml"
+	"fmt"
 	"io"
 )
 
@@ -296,6 +297,7 @@ func (n *Node) SetChildren(nodes ...Node) {
 		refresh(nodelist)
 		break
 	default:
+		panic(fmt.Sprintf("Cannot set children for node type %v", n.kind))
 	}
 }
 
@@ -314,8 +316,10 @@ func (n *Node) Remove() {
 func (n *Node) extract() []Node {
 	if n.kind == StartNode {
 		return n.nodes[n.pos : n.end+1]
-	} else {
+	} else if n.nodes != nil {
 		return n.nodes[n.pos:n.end]
+	} else {
+		return []Node{*n}
 	}
 }
 

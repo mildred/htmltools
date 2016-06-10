@@ -10,6 +10,7 @@ import (
 	//"golang.org/x/net/html"
 	"bytes"
 	"io"
+	"io/ioutil"
 	"launchpad.net/xmlpath"
 	"os"
 	"path/filepath"
@@ -72,6 +73,24 @@ func main() {
 func handleTags(curdir string, r io.Reader, w io.Writer) error {
 	var err error
 
+	// Copy input
+	r2, err := ioutil.TempFile("", "html-template.temp.html")
+	if err != nil {
+		return err
+	}
+	defer r2.Close()
+	defer os.Remove(r2.Name())
+	_, err = io.Copy(r2, r)
+	if err != nil {
+		return err
+	}
+
+	// Reopen temp file
+	r, err = os.Open(r2.Name())
+	if err != nil {
+		return err
+	}
+
 	if !filepath.IsAbs(curdir) {
 		curdir, err = filepath.Abs(curdir)
 		if err != nil {
@@ -106,16 +125,21 @@ func handleTags(curdir string, r io.Reader, w io.Writer) error {
 		if p.IsStartTag() && p.Data() == "template-instance" {
 
 			//log("template-instance: %v\n", string(raw))
-			src := p.Attr("src")
+			src := p.AttrVal("src", "")
 			using := p.Attr("using")
 
-			if src != nil && using != nil {
+			if using != nil {
 				if template, ok := templates[using.Val]; ok {
 					mapping, err := p.RawContent()
 					if err != nil {
 						return err
 					}
-					raw, err = evalTemplate(curdir, src.Val, template, mapping)
+					if src == "" {
+						r2.Seek(0, 0)
+						raw, err = evalTemplate(curdir, src, r2, template, mapping)
+					} else {
+						raw, err = evalTemplate(curdir, src, nil, template, mapping)
+					}
 					if err != nil {
 						return err
 					}
@@ -140,31 +164,35 @@ var (
 
 // curdir: directory where the template file is
 // src:    data source relative to curdir
-func evalTemplate(curdir, src string, template, mapping []byte) ([]byte, error) {
+func evalTemplate(curdir, src string, sf io.Reader, template, mapping []byte) ([]byte, error) {
 	var err error
+	var in, tt *xmlpath.Node
 
 	srcfile := src
 	if !filepath.IsAbs(srcfile) {
 		srcfile = filepath.Join(curdir, srcfile)
 	}
 
-	sf, err := os.Open(srcfile)
-	if err != nil {
-		return nil, err
-	}
-	defer sf.Close()
-	in, err := xmlpath.ParseHTML(sf)
-	if err != nil {
-		return nil, err
-	}
-
 	p := parser.NewParser(bytes.NewReader(mapping))
 
-	tt, err := xmlpath.ParseHTML(bytes.NewReader(template))
+	tt, err = xmlpath.ParseHTML(bytes.NewReader(template))
 	if err != nil {
 		return nil, err
 	}
 	t := tt.Ref
+
+	if sf == nil {
+		sff, err := os.Open(srcfile)
+		if err != nil {
+			return nil, err
+		}
+		defer sff.Close()
+		sf = sff
+	}
+	in, err = xmlpath.ParseHTML(sf)
+	if err != nil {
+		return nil, err
+	}
 
 	err = runTemplate(curdir, src, p, in, t)
 	if err != nil && err != io.EOF {
@@ -238,7 +266,7 @@ func runTemplate(curdir, src string, p *parser.Parser, in *xmlpath.Node, t *xmlp
 
 			if nodes == nil && frompath != nil {
 				log("  frompath: %s\n", from.Val)
-				log("  frompath: %#v\n", string(in.XML()))
+				//log("  frompath: %#v\n", string(in.XML()))
 				i := frompath.Iter(in)
 				for i.Next() {
 					nodes = append(nodes, *i.Node())
@@ -266,6 +294,7 @@ func runTemplate(curdir, src string, p *parser.Parser, in *xmlpath.Node, t *xmlp
 					if err != nil {
 						return err
 					}
+					log("  convert to relative link: %#v\n", string(data))
 					nodes = []xmlpath.Node{xmlpath.CreateTextNode([]byte(data))}
 					break
 				case "datetime":
@@ -277,7 +306,9 @@ func runTemplate(curdir, src string, p *parser.Parser, in *xmlpath.Node, t *xmlp
 					if err != nil {
 						return err
 					}
-					data := strftime.Format(p.AttrVal("strftime", "%c"), t)
+					format := p.AttrVal("strftime", "%c")
+					data := strftime.Format(format, t)
+					log("  convert to time (%s): %#v\n", format, string(data))
 					nodes = []xmlpath.Node{xmlpath.CreateTextNode([]byte(data))}
 					break
 				}
@@ -285,6 +316,7 @@ func runTemplate(curdir, src string, p *parser.Parser, in *xmlpath.Node, t *xmlp
 
 			if fetch != nil && fetch.Val == "resource" {
 				newsrc := string(nodesToText(nodes))
+				log("  fetch %#v\n", newsrc)
 				if !filepath.IsAbs(newsrc) {
 					newsrc = filepath.Join(filepath.Dir(src), newsrc)
 				}
@@ -292,6 +324,7 @@ func runTemplate(curdir, src string, p *parser.Parser, in *xmlpath.Node, t *xmlp
 				if !filepath.IsAbs(newsrcfile) {
 					newsrcfile = filepath.Join(curdir, newsrcfile)
 				}
+				log("  file: %#v\n", newsrcfile)
 
 				sf, err := os.Open(newsrcfile)
 				if err != nil {
@@ -333,7 +366,11 @@ func runTemplate(curdir, src string, p *parser.Parser, in *xmlpath.Node, t *xmlp
 
 					} else if tnode.Node.Kind() == xmlpath.StartNode {
 						log("Set %d children\n", len(nodes))
+						for i := range nodes {
+							log("--> %#v\n", string(nodes[i].XML()))
+						}
 						tnode.Node.SetChildren(nodes...)
+						log("==> %#v\n", string(tnode.Node.XML()))
 
 					} else {
 						log("Convert %d nodes to text\n", len(nodes))
