@@ -317,28 +317,32 @@ func runTemplate(curdir, src string, p *parser.Parser, in *xmlpath.Node, t *xmlp
 			if fetch != nil && fetch.Val == "resource" {
 				newsrc := string(nodesToText(nodes))
 				log("  fetch %#v\n", newsrc)
-				if !filepath.IsAbs(newsrc) {
-					newsrc = filepath.Join(filepath.Dir(src), newsrc)
-				}
-				newsrcfile := newsrc
-				if !filepath.IsAbs(newsrcfile) {
-					newsrcfile = filepath.Join(curdir, newsrcfile)
-				}
-				log("  file: %#v\n", newsrcfile)
 
-				sf, err := os.Open(newsrcfile)
-				if err != nil {
-					return err
-				}
-				defer sf.Close()
-				in, err := xmlpath.ParseHTML(sf)
-				if err != nil {
-					return err
-				}
+				if newsrc != "" {
 
-				err = runTemplate(curdir, newsrc, p, in, t)
-				if err != nil {
-					return err
+					if !filepath.IsAbs(newsrc) {
+						newsrc = filepath.Join(filepath.Dir(src), newsrc)
+					}
+					newsrcfile := newsrc
+					if !filepath.IsAbs(newsrcfile) {
+						newsrcfile = filepath.Join(curdir, newsrcfile)
+					}
+					log("  file: %#v\n", newsrcfile)
+
+					sf, err := os.Open(newsrcfile)
+					if err != nil {
+						return err
+					}
+					defer sf.Close()
+					in, err := xmlpath.ParseHTML(sf)
+					if err != nil {
+						return err
+					}
+
+					err = runTemplate(curdir, newsrc, p, in, t)
+					if err != nil {
+						return err
+					}
 				}
 				nodes = nil
 			}
