@@ -128,21 +128,45 @@ func handleTags(curdir string, r io.Reader, w io.Writer) error {
 			src := p.AttrVal("src", "")
 			using := p.Attr("using")
 
+			var template []byte = nil
 			if using != nil {
-				if template, ok := templates[using.Val]; ok {
-					mapping, err := p.RawContent()
+				template = templates[using.Val]
+			}
+
+			mapping, err := p.RawContent()
+			if err != nil {
+				return err
+			}
+
+			if template == nil {
+				pp := parser.NewParser(bytes.NewReader(mapping))
+				for template == nil {
+					err := pp.Next()
 					if err != nil {
 						return err
 					}
-					if src == "" {
-						r2.Seek(0, 0)
-						raw, err = evalTemplate(curdir, src, r2, template, mapping)
-					} else {
-						raw, err = evalTemplate(curdir, src, nil, template, mapping)
+
+					if pp.IsStartTag() && pp.Data() == "template" {
+						template, err = pp.RawContent()
+						if err != nil {
+							return err
+						}
 					}
+				}
+			}
+
+			if template != nil {
+				if src == "" {
+					_, err := r2.Seek(0, 0)
 					if err != nil {
 						return err
 					}
+					raw, err = evalTemplate(curdir, src, r2, template, mapping)
+				} else {
+					raw, err = evalTemplate(curdir, src, nil, template, mapping)
+				}
+				if err != nil {
+					return err
 				}
 			}
 
@@ -289,6 +313,9 @@ func runTemplate(curdir, src string, p *parser.Parser, in *xmlpath.Node, t *xmlp
 					log("  unknown format %#v, aborting mapping\n", format.Val)
 					nodes = nil
 					break
+				case "text":
+					nodes = []xmlpath.Node{xmlpath.CreateTextNode(nodesToText(nodes))}
+					break
 				case "link-relative":
 					data, err := relurl.UrlJoinString(filepath.Dir(src), string(nodesToText(nodes)), curdir)
 					if err != nil {
@@ -355,12 +382,18 @@ func runTemplate(curdir, src string, p *parser.Parser, in *xmlpath.Node, t *xmlp
 
 					if multi != nil && multi.Val == "true" {
 						log("Multiple (%d) templating of %#v\n", len(nodes), string(tnode.Node.XML()))
+						submap, err := p.RawContent()
+						if err != nil {
+							return err
+						}
 						for i, inode := range nodes {
 							n := tnode.Node.Copy().Ref
 							//log("Insert %#v\n", string(n.Node.XML()))
 							//log(" before %#v\n", string(tnode.Node.XML()))
-							err := runTemplate(curdir, src, p, &inode, n)
-							if err != nil {
+							pp := parser.NewParser(bytes.NewReader(submap))
+							err = runTemplate(curdir, src, pp, &inode, n)
+							if err != nil && err != io.EOF {
+								log("Multiple templating error %v\n", err)
 								return err
 							}
 							tnode.Node.InsertBefore(*n.Node)
