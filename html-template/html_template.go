@@ -365,7 +365,7 @@ func runTemplate(curdir, src string, p *parser.Parser, in *xmlpath.Node, t *xmlp
 					defer sf.Close()
 					in, err := xmlpath.ParseHTML(sf)
 					if err != nil {
-						return err
+						return fmt.Errorf("%s: %v", newsrcfile, err)
 					}
 
 					err = runTemplate(curdir, newsrc, p, in, t)

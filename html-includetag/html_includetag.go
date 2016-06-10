@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/mildred/htmltools/htmldepth"
+	"github.com/mildred/htmltools/parser"
 	"golang.org/x/net/html"
 	"io"
 	"os"
@@ -97,52 +98,36 @@ func readTagContent(z *html.Tokenizer, d *htmldepth.HTMLDepth) ([]byte, error) {
 }
 
 func handleTags(curdir, xmlBase string, f1 io.Reader, f2 io.Writer, content_stack []Content) error {
-	z := html.NewTokenizer(f1)
-	d := &htmldepth.HTMLDepth{}
+	p := parser.NewParser(f1)
+	//fmt.Fprintf(os.Stderr, "handle-tags(%#v, %#v)\n", curdir, xmlBase)
 
 	for {
-		tk := z.Next()
-		if tk == html.ErrorToken {
-			return z.Err()
+		err := p.Next()
+		if err != nil {
+			return err
 		}
 
-		raw0 := z.Raw()
-		rawData := make([]byte, len(raw0))
-		copy(rawData, raw0)
-		t := z.Token()
-
-		if tk == html.StartTagToken || tk == html.SelfClosingTagToken {
-			//fmt.Fprintf(os.Stderr, "+ %d %v\n", d.Depth(), string(rawData))
-			d.Start(string(t.Data))
-		}
-
+		rawData := p.Raw()
 		silent := false
 		addXmlBase := true
 
-		if (tk == html.StartTagToken || tk == html.SelfClosingTagToken) && t.Data == "include-file" {
+		if p.IsStartTag() && p.Data() == "include-file" {
 			var src string
 			var base string
-			if d.Depth() == 1 {
+			if p.Depth() == 1 {
 				base = xmlBase
 			}
-			for _, a := range t.Attr {
-				//fmt.Fprintf(os.Stderr, "include-file %v:%v=%v\n", a.Namespace, a.Key, a.Val)
-				if a.Key == "src" {
-					src = a.Val
-				} else if a.Key == "xml:base" {
-					base = a.Val
-				}
-			}
+			src = p.AttrVal("src", "")
+			base = p.AttrVal("xml:base", base)
+			//fmt.Fprintf(os.Stderr, "include-file %#v %#v %#v\n", src, base, p.Token().String())
+
 			var inData []byte
-			if tk == html.StartTagToken {
+			if p.Token().Type == html.StartTagToken {
 				var err error
-				inData, err = readTagContent(z, d)
+				inData, err = p.RawContent()
 				if err != nil {
 					return err
 				}
-				rawData = bytes.Replace(inData, []byte("--"), []byte("- -"), -1)
-				rawData = append([]byte("<!--"), rawData...)
-				rawData = append(rawData, []byte("-->")...)
 			}
 			if src != "" {
 				abssrcdir, err := filepath.Abs(filepath.Join(curdir, filepath.Dir(src)))
@@ -176,17 +161,13 @@ func handleTags(curdir, xmlBase string, f1 io.Reader, f2 io.Writer, content_stac
 				addXmlBase = false
 			}
 		}
-		if tk == html.SelfClosingTagToken && t.Data == "include-content" {
+		if p.IsStartTag() && p.IsEndTag() && p.Data() == "include-content" {
 			//fmt.Fprintf(os.Stderr, "include-content %#v\n", content_stack)
 			var base string
-			if d.Depth() == 1 {
+			if p.Depth() == 1 {
 				base = xmlBase
 			}
-			for _, a := range t.Attr {
-				if a.Key == "xml:base" {
-					base = a.Val
-				}
-			}
+			base = p.AttrVal("xml:base", base)
 			content := content_stack[len(content_stack)-1]
 			err := handleTags(
 				filepath.Join(curdir, content.Base),
@@ -200,17 +181,18 @@ func handleTags(curdir, xmlBase string, f1 io.Reader, f2 io.Writer, content_stac
 			addXmlBase = false
 		}
 
-		//fmt.Fprintf(os.Stderr, "%d base(%v) %v %v\n", d.Depth(), xmlBase, addXmlBase, string(rawData))
-		if xmlBase != "." && xmlBase != "" && d.Depth() == 1 && addXmlBase {
+		//fmt.Fprintf(os.Stderr, "%d base(%v) %v %v\n", p.Depth(), xmlBase, addXmlBase, string(rawData))
+		if xmlBase != "." && xmlBase != "" && p.Depth() == 1 && addXmlBase {
 			//fmt.Fprintf(os.Stderr, "%d base(%v) %v\n", d.Depth(), xmlBase, string(rawData))
-			if tk == html.StartTagToken {
+			if p.Token().Type == html.StartTagToken {
 				//t := z.Token()
 				//t.Attr = append(t.Attr, html.Attribute{"", "xml:base", xmlBase})
 				//rawData = []byte(t.String())
 				rawData = append(rawData[:len(rawData)-1], []byte(" xml:base=\""+html.EscapeString(xmlBase)+"\">")...)
-			} else if tk == html.SelfClosingTagToken {
+			} else if p.Token().Type == html.SelfClosingTagToken {
 				rawData = append(rawData[:len(rawData)-2], []byte(" xml:base=\""+html.EscapeString(xmlBase)+"\" />")...)
 			}
+			//fmt.Fprintf(os.Stderr, "rawData=%#v\n", string(rawData))
 		}
 
 		if !silent {
@@ -220,14 +202,5 @@ func handleTags(curdir, xmlBase string, f1 io.Reader, f2 io.Writer, content_stac
 			}
 		}
 
-		if tk == html.EndTagToken || tk == html.SelfClosingTagToken {
-			//fmt.Fprintf(os.Stderr, "- %d %v\n", d.Depth(), string(rawData))
-			err := d.Stop(string(t.Data))
-			if err != nil {
-				return err
-			}
-		}
-
 	}
-	return nil
 }

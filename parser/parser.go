@@ -15,13 +15,15 @@ type Parser struct {
 }
 
 func NewParser(f io.Reader) *Parser {
-	return &Parser{
+	p := &Parser{
 		z:    html.NewTokenizer(f),
 		t:    nil,
 		raw:  nil,
 		d:    &htmldepth.HTMLDepth{},
 		open: false,
 	}
+	p.z.AllowCDATA(true)
+	return p
 }
 
 // Go to next token
