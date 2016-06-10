@@ -157,7 +157,7 @@ func handleTags(curdir string, r io.Reader, w io.Writer) error {
 
 			if template != nil {
 				if src == "" {
-					_, err := r2.Seek(0, 0)
+					_, err = r2.Seek(0, 0)
 					if err != nil {
 						return err
 					}
@@ -220,6 +220,7 @@ func evalTemplate(curdir, src string, sf io.Reader, template, mapping []byte) ([
 
 	err = runTemplate(curdir, src, p, in, t)
 	if err != nil && err != io.EOF {
+		log("Error: %#v\n", err)
 		return nil, err
 	}
 
@@ -240,6 +241,7 @@ func runTemplate(curdir, src string, p *parser.Parser, in *xmlpath.Node, t *xmlp
 
 		err := p.Next()
 		if err != nil {
+			//log("Error: %#v\n", err)
 			return err
 		}
 
@@ -368,6 +370,7 @@ func runTemplate(curdir, src string, p *parser.Parser, in *xmlpath.Node, t *xmlp
 
 					err = runTemplate(curdir, newsrc, p, in, t)
 					if err != nil {
+						log("Fetch resource error %v\n", err)
 						return err
 					}
 				}
