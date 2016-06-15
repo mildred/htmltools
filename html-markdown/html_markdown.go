@@ -58,10 +58,12 @@ func handleTags(curdir string, f1 io.Reader, f2 io.Writer) error {
 
 		if p.Type() == html.StartTagToken && p.Data() == "markdown" {
 
-			data, err := p.RawContent()
+			data, err := p.TextContent()
 			if err != nil {
 				return err
 			}
+
+			//fmt.Fprintf(os.Stderr, "markdown %#v\n", string(data))
 
 			md := markdown.New(markdown.XHTMLOutput(true))
 			raw = []byte(md.RenderToString(data))

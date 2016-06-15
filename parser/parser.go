@@ -161,3 +161,37 @@ func (p *Parser) RawContent() ([]byte, error) {
 		data = append(data, p.Raw()...)
 	}
 }
+
+func (p *Parser) TextContent() ([]byte, error) {
+	if p.t.Type != html.StartTagToken {
+		return nil, nil
+	}
+
+	var data []byte
+	var depth int = p.d.Depth()
+
+	for {
+		err := p.Next()
+		if err != nil {
+			return nil, err
+		}
+
+		var curData []byte
+		if p.Token().Type == html.TextToken {
+			curData = []byte(p.Token().Data)
+		}
+
+		err = p.End()
+		if err != nil {
+			return nil, err
+		}
+
+		if depth > p.d.Depth() {
+			return data, nil
+		}
+
+		if curData != nil {
+			data = append(data, curData...)
+		}
+	}
+}
