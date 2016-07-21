@@ -127,6 +127,7 @@ func handleTags(curdir string, r io.Reader, w io.Writer) error {
 			//log("template-instance: %v\n", string(raw))
 			src := p.AttrVal("src", "")
 			using := p.Attr("using")
+			ifClause := p.AttrVal("if", "")
 
 			var template []byte = nil
 			if using != nil {
@@ -155,15 +156,18 @@ func handleTags(curdir string, r io.Reader, w io.Writer) error {
 				}
 			}
 
+			raw = append(raw, mapping...)
+			raw = append(raw, p.Raw()...)
+
 			if template != nil {
 				if src == "" {
 					_, err = r2.Seek(0, 0)
 					if err != nil {
 						return err
 					}
-					raw, err = evalTemplate(curdir, src, r2, template, mapping)
+					raw, err = evalTemplate(curdir, src, r2, template, mapping, raw, ifClause)
 				} else {
-					raw, err = evalTemplate(curdir, src, nil, template, mapping)
+					raw, err = evalTemplate(curdir, src, nil, template, mapping, raw, ifClause)
 				}
 				if err != nil {
 					return err
@@ -188,7 +192,7 @@ var (
 
 // curdir: directory where the template file is
 // src:    data source relative to curdir
-func evalTemplate(curdir, src string, sf io.Reader, template, mapping []byte) ([]byte, error) {
+func evalTemplate(curdir, src string, sf io.Reader, template, mapping, raw []byte, ifClause string) ([]byte, error) {
 	var err error
 	var in, tt *xmlpath.Node
 
@@ -216,6 +220,17 @@ func evalTemplate(curdir, src string, sf io.Reader, template, mapping []byte) ([
 	in, err = xmlpath.ParseHTML(sf)
 	if err != nil {
 		return nil, err
+	}
+
+	if ifClause != "" {
+		ifPath, err := xmlpath.Compile(ifClause)
+		if err != nil {
+			return nil, err
+		}
+		log("\nApply if clause %#v\nto: %#v", ifClause, in)
+		if !ifPath.Exists(in) {
+			return raw, nil
+		}
 	}
 
 	err = runTemplate(curdir, src, p, in, t)
