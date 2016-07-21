@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/mildred/htmltools/htmldepth"
+	"github.com/mildred/htmltools/multifiles"
 	"github.com/mildred/htmltools/parser"
 	"golang.org/x/net/html"
 	"io"
@@ -13,6 +14,7 @@ import (
 )
 
 func main() {
+	chdir := flag.String("C", "", "Change directory before operation")
 	flag.Parse()
 	infile := flag.Arg(0)
 
@@ -20,11 +22,18 @@ func main() {
 		infile = ""
 	}
 
-	var f1 io.Reader
-	var dir string
+	if *chdir != "" {
+		err := os.Chdir(*chdir)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err.Error())
+			os.Exit(1)
+		}
+	}
+
+	var r *multifiles.Reader
+	var w *multifiles.Writer = multifiles.NewWriter(os.Stdout)
 	if infile == "" {
-		f1 = os.Stdin
-		dir = "."
+		r = multifiles.NewReader(os.Stdin, "")
 	} else {
 		f, err := os.Open(infile)
 		if err != nil {
@@ -33,11 +42,41 @@ func main() {
 			return
 		}
 		defer f.Close()
-		f1 = f
-		dir = filepath.Dir(infile)
+		r = multifiles.NewReader(f, infile)
 	}
 
-	err := handleTags(dir, "", f1, os.Stdout, []Content{Content{"", nil}})
+	cwd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		os.Exit(1)
+	}
+
+	for err = r.Next(); err != io.EOF; err = r.Next() {
+		dir := filepath.Dir(r.FileName())
+		err = w.Next(r.Name())
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err.Error())
+			os.Exit(1)
+		}
+		if r.Mode() == multifiles.ModeFlat {
+			w.SetFlat()
+		}
+		err = os.Chdir(dir)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err.Error())
+			os.Exit(1)
+		}
+		err = handleTags(dir, "", r, w, []Content{Content{"", nil}})
+		if err != nil && err != io.EOF {
+			fmt.Fprintln(os.Stderr, err.Error())
+			os.Exit(1)
+		}
+		err = os.Chdir(cwd)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err.Error())
+			os.Exit(1)
+		}
+	}
 	if err != nil && err != io.EOF {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
