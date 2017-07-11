@@ -139,21 +139,8 @@ func (s *pathStepState) next() bool {
 		if s.step.pred == nil {
 			return true
 		}
-		if s.step.pred.bval {
-			if s.step.pred.path.Exists(s.node) {
-				return true
-			}
-		} else if s.step.pred.path != nil {
-			iter := s.step.pred.path.Iter(s.node)
-			for iter.Next() {
-				if iter.Node().equals(s.step.pred.sval) {
-					return true
-				}
-			}
-		} else {
-			if s.step.pred.ival == s.pos {
-				return true
-			}
+		if s.step.pred.Eval(s.node, s.pos) {
+			return true
 		}
 	}
 	return false
@@ -347,11 +334,51 @@ func (s *pathStepState) _next() bool {
 	return false
 }
 
-type pathPredicate struct {
+type expr interface {
+	Eval(node *Node, pos int) bool
+}
+
+type exprOpEq struct {
+	lval *Path
+	rval string
+}
+
+func (e *exprOpEq) Eval(node *Node, pos int) bool {
+	iter := e.lval.Iter(node)
+	for iter.Next() {
+		if iter.Node().equals(e.rval) {
+			return true
+		}
+	}
+	return false
+}
+
+type exprString struct {
+	val string
+}
+
+type exprInt struct {
+	val int
+}
+
+func (e *exprInt) Eval(node *Node, pos int) bool {
+	return e.val == pos
+}
+
+type exprBool struct {
+	val bool
+}
+
+func (e *exprBool) Eval(node *Node, pos int) bool {
+	return e.val
+}
+
+type exprPath struct {
 	path *Path
-	sval string
-	ival int
-	bval bool
+}
+
+func (e *exprPath) Eval(node *Node, pos int) bool {
+	return e.path.Exists(node)
 }
 
 type pathStep struct {
@@ -361,7 +388,7 @@ type pathStep struct {
 	space  string
 	name   string
 	kind   NodeKind
-	pred   *pathPredicate
+	pred   expr
 }
 
 func (step *pathStep) match(node *Node) bool {
@@ -518,32 +545,9 @@ func (c *pathCompiler) parsePath(ns map[string]string) (path *Path, err error) {
 		}
 		step.space = ns[step.prefix]
 		if c.skipByte('[') {
-			step.pred = &pathPredicate{}
-			if ival, ok := c.parseInt(); ok {
-				if ival == 0 {
-					return nil, c.errorf("positions start at 1")
-				}
-				step.pred.ival = ival
-			} else {
-				path, err := c.parsePath(ns)
-				if err != nil {
-					return nil, err
-				}
-				if path.path[0] == '-' {
-					if _, err = strconv.Atoi(path.path); err == nil {
-						return nil, c.errorf("positions must be positive")
-					}
-				}
-				step.pred.path = path
-				if c.skipByte('=') {
-					sval, err := c.parseLiteral()
-					if err != nil {
-						return nil, c.errorf("%v", err)
-					}
-					step.pred.sval = sval
-				} else {
-					step.pred.bval = true
-				}
+			step.pred, err = c.parseExpr(ns)
+			if err != nil {
+				return nil, err
 			}
 			if !c.skipByte(']') {
 				return nil, c.errorf("expected ']'")
@@ -559,6 +563,36 @@ func (c *pathCompiler) parsePath(ns map[string]string) (path *Path, err error) {
 		}
 	}
 	panic("unreachable")
+}
+
+func (c *pathCompiler) parseExpr(ns map[string]string) (pred expr, err error) {
+	pred = &exprBool{false}
+	if ival, ok := c.parseInt(); ok {
+		if ival == 0 {
+			return nil, c.errorf("positions start at 1")
+		}
+		pred = &exprInt{ival}
+	} else {
+		path, err := c.parsePath(ns)
+		if err != nil {
+			return nil, err
+		}
+		if path.path[0] == '-' {
+			if _, err = strconv.Atoi(path.path); err == nil {
+				return nil, c.errorf("positions must be positive")
+			}
+		}
+		if c.skipByte('=') {
+			sval, err := c.parseLiteral()
+			if err != nil {
+				return nil, c.errorf("%v", err)
+			}
+			pred = &exprOpEq{path, sval}
+		} else {
+			pred = &exprPath{path}
+		}
+	}
+	return pred, nil
 }
 
 func extractPrefix(fullname string) (string, string) {
