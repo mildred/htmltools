@@ -353,6 +353,34 @@ func (e *exprOpEq) Eval(node *Node, pos int) bool {
 	return false
 }
 
+type exprOpOr struct {
+	vals []expr
+}
+
+func (e *exprOpOr) Eval(node *Node, pos int) bool {
+	for _, e := range e.vals {
+		res := e.Eval(node, pos)
+		if res {
+			return true
+		}
+	}
+	return false
+}
+
+type exprOpAnd struct {
+	vals []expr
+}
+
+func (e *exprOpAnd) Eval(node *Node, pos int) bool {
+	for _, e := range e.vals {
+		res := e.Eval(node, pos)
+		if !res {
+			return false
+		}
+	}
+	return true
+}
+
 type exprString struct {
 	val string
 }
@@ -566,6 +594,68 @@ func (c *pathCompiler) parsePath(ns map[string]string) (path *Path, err error) {
 }
 
 func (c *pathCompiler) parseExpr(ns map[string]string) (pred expr, err error) {
+	return c.parseOrExpr(ns)
+}
+
+func (c *pathCompiler) parseOrExpr(ns map[string]string) (pred expr, err error) {
+	c.skipSpaces()
+	lval, err := c.parseAndExpr(ns)
+	if err != nil {
+		return nil, err
+	}
+	expr := &exprOpOr{vals: []expr{lval}}
+	pred = expr
+
+	for {
+		c.skipSpaces()
+		i := c.i
+		if !c.skipString("or") || !c.skipSpaces() {
+			c.i = i
+			if len(expr.vals) == 1 {
+				return lval, nil
+			} else {
+				return pred, nil
+			}
+		}
+
+		rval, err := c.parseAndExpr(ns)
+		if err != nil {
+			return nil, err
+		}
+		expr.vals = append(expr.vals, rval)
+	}
+}
+
+func (c *pathCompiler) parseAndExpr(ns map[string]string) (pred expr, err error) {
+	c.skipSpaces()
+	lval, err := c.parseExprLeaf(ns)
+	if err != nil {
+		return nil, err
+	}
+	expr := &exprOpAnd{vals: []expr{lval}}
+	pred = expr
+
+	for {
+		c.skipSpaces()
+		i := c.i
+		if !c.skipString("and") || !c.skipSpaces() {
+			c.i = i
+			if len(expr.vals) == 1 {
+				return lval, nil
+			} else {
+				return pred, nil
+			}
+		}
+
+		rval, err := c.parseExprLeaf(ns)
+		if err != nil {
+			return nil, err
+		}
+		expr.vals = append(expr.vals, rval)
+	}
+}
+
+func (c *pathCompiler) parseExprLeaf(ns map[string]string) (pred expr, err error) {
 	pred = &exprBool{false}
 	if ival, ok := c.parseInt(); ok {
 		if ival == 0 {
@@ -592,6 +682,7 @@ func (c *pathCompiler) parseExpr(ns map[string]string) (pred expr, err error) {
 			pred = &exprPath{path}
 		}
 	}
+	// TODO: support boolean operators
 	return pred, nil
 }
 
@@ -635,6 +726,23 @@ func (c *pathCompiler) parseInt() (v int, ok bool) {
 		return 0, false
 	}
 	return v, true
+}
+
+func (c *pathCompiler) skipSpaces() bool {
+	res := false
+	for c.i < len(c.path) && strings.ContainsAny(string(c.path[c.i]), " \t\n\v") {
+		c.i++
+		res = true
+	}
+	return res
+}
+
+func (c *pathCompiler) skipString(str string) bool {
+	if c.i+len(str)-1 < len(c.path) && c.path[c.i:c.i+len(str)] == str {
+		c.i += len(str)
+		return true
+	}
+	return false
 }
 
 func (c *pathCompiler) skipByte(b byte) bool {

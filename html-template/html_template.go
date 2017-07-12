@@ -24,6 +24,10 @@ func log(format string, args ...interface{}) {
 	}
 }
 
+func logv(format string, args ...interface{}) {
+	fmt.Fprintf(os.Stderr, format, args...)
+}
+
 func main() {
 	chdir := flag.String("C", "", "Change directory before operation")
 	verb := flag.Bool("v", false, "Be verbose")
@@ -235,22 +239,22 @@ func evalTemplate(curdir, src string, sf io.Reader, template, mapping, raw []byt
 
 	err = runTemplate(curdir, src, p, in, t)
 	if err != nil && err != io.EOF {
-		log("Error: %#v\n", err)
+		logv("Error: %#v\n", err)
 		return nil, err
 	}
 
 	return t.Node.XML(), nil
 }
 
-func runTemplate(curdir, src string, p *parser.Parser, in *xmlpath.Node, t *xmlpath.NodeRef) error {
+func runTemplate(curdir, src string, p *parser.Parser, in *xmlpath.Node, tmpl *xmlpath.NodeRef) error {
 	depth := p.Depth()
 
-	log("\nTemplating %#v\nfrom:  %#v\nusing: %#v\n\n", string(src), string(in.XML()), string(t.Node.XML()))
+	log("\n[%d] Templating in file %#v\nfrom source data: %#v\nusing template: %#v\n\n", depth, string(src), string(in.XML()), string(tmpl.Node.XML()))
 
 	for {
 		p.End()
 		if p.Depth() < depth {
-			log("\nDone Templating %#v\nresult: %#v\n\n", src, string(t.Node.XML()))
+			log("\n[%d]Done Templating %#v\nresult: %#v\n\n", depth, src, string(tmpl.Node.XML()))
 			return nil
 		}
 
@@ -261,7 +265,7 @@ func runTemplate(curdir, src string, p *parser.Parser, in *xmlpath.Node, t *xmlp
 		}
 
 		if p.IsStartTag() && p.Data() == "map" {
-			log("Mapping: %#v\n\n", string(p.Token().String()))
+			log("[%d] Mapping: %v\n\n", depth, string(p.Token().String()))
 			var namespaces map[string]string = nil
 			// FIXME: namespaces
 			var frompath, topath *xmlpath.Path
@@ -281,11 +285,11 @@ func runTemplate(curdir, src string, p *parser.Parser, in *xmlpath.Node, t *xmlp
 			}
 
 			if onlyif != nil && onlyif.Val == "empty" && topath != nil {
-				i := topath.Iter(t.Node)
+				i := topath.Iter(tmpl.Node)
 				empty := true
 				for i.Next() {
 					if path_children.Iter(i.Node()).Next() {
-						log("  only-if=empty: skip because %v is not empty\n", to.Val)
+						log("[%d]   only-if=empty: skip because %v is not empty\n", depth, to.Val)
 						empty = false
 						break
 					}
@@ -293,7 +297,7 @@ func runTemplate(curdir, src string, p *parser.Parser, in *xmlpath.Node, t *xmlp
 				if !empty {
 					continue
 				}
-				log("  only-if=empty: continue because %v is empty\n", to.Val)
+				log("[%d]   only-if=empty: continue because %v is empty\n", depth, to.Val)
 			}
 
 			if from != nil {
@@ -306,14 +310,14 @@ func runTemplate(curdir, src string, p *parser.Parser, in *xmlpath.Node, t *xmlp
 			var nodes []xmlpath.Node
 
 			if nodes == nil && frompath != nil {
-				log("  frompath: %s\n", from.Val)
+				log("[%d]   frompath: %s\n", depth, from.Val)
 				//log("  frompath: %#v\n", string(in.XML()))
 				i := frompath.Iter(in)
 				for i.Next() {
 					nodes = append(nodes, *i.Node())
-					log("  - %#v\n", string(i.Node().XML()))
+					log("[%d]   - %#v\n", depth, string(i.Node().XML()))
 				}
-				log("  frompath: %s (%d results)\n", from.Val, len(nodes))
+				log("[%d]   frompath: %s (%d results)\n", depth, from.Val, len(nodes))
 			}
 
 			if nodes == nil && dataattr != nil && dataattr.Val == "relative-url" {
@@ -327,7 +331,7 @@ func runTemplate(curdir, src string, p *parser.Parser, in *xmlpath.Node, t *xmlp
 			if format != nil {
 				switch format.Val {
 				default:
-					log("  unknown format %#v, aborting mapping\n", format.Val)
+					log("[%d]   unknown format %#v, aborting mapping\n", depth, format.Val)
 					nodes = nil
 					break
 				case "text":
@@ -338,7 +342,7 @@ func runTemplate(curdir, src string, p *parser.Parser, in *xmlpath.Node, t *xmlp
 					if err != nil {
 						return err
 					}
-					log("  convert to relative link: %#v\n", string(data))
+					log("[%d]   convert to relative link: %#v\n", depth, string(data))
 					nodes = []xmlpath.Node{xmlpath.CreateTextNode([]byte(data))}
 					break
 				case "datetime":
@@ -352,17 +356,24 @@ func runTemplate(curdir, src string, p *parser.Parser, in *xmlpath.Node, t *xmlp
 					}
 					format := p.AttrVal("strftime", "%c")
 					data := strftime.Format(format, t)
-					log("  convert to time (%s): %#v\n", format, string(data))
+					log("[%d]   convert to time (%s): %#v\n", depth, format, string(data))
 					nodes = []xmlpath.Node{xmlpath.CreateTextNode([]byte(data))}
 					break
 				}
 			}
 
 			if fetch != nil && fetch.Val == "resource" {
-				newsrc := string(nodesToText(nodes))
-				log("  fetch %#v\n", newsrc)
+				newsrcs := nodesToSlice(nodes)
 
-				if newsrc != "" {
+				submap, err := p.RawContent()
+				if err != nil {
+					return err
+				}
+
+				var res []xmlpath.Node
+
+				for i, newsrc := range newsrcs {
+					log("[%d]   fetch %#v\n", depth, newsrc)
 
 					if !filepath.IsAbs(newsrc) {
 						newsrc = filepath.Join(filepath.Dir(src), newsrc)
@@ -371,35 +382,45 @@ func runTemplate(curdir, src string, p *parser.Parser, in *xmlpath.Node, t *xmlp
 					if !filepath.IsAbs(newsrcfile) {
 						newsrcfile = filepath.Join(curdir, newsrcfile)
 					}
-					log("  file: %#v\n", newsrcfile)
+					log("[%d]   file: %#v\n", depth, newsrcfile)
 
-					sf, err := os.Open(newsrcfile)
+					n := tmpl.Node.Copy().Ref
+					err = func() error {
+						sf, err := os.Open(newsrcfile)
+						if err != nil {
+							return err
+						}
+						defer sf.Close()
+						in, err := xmlpath.ParseHTML(sf)
+						if err != nil {
+							return fmt.Errorf("%s: %v", newsrcfile, err)
+						}
+
+						pp := parser.NewParser(bytes.NewReader(submap))
+						err = runTemplate(curdir, newsrc, pp, in, n)
+						if err != nil && err != io.EOF {
+							log("[%d] Fetch resource error: %v\n", depth, err)
+							return err
+						}
+						return nil
+					}()
 					if err != nil {
 						return err
 					}
-					defer sf.Close()
-					in, err := xmlpath.ParseHTML(sf)
-					if err != nil {
-						return fmt.Errorf("%s: %v", newsrcfile, err)
-					}
-
-					err = runTemplate(curdir, newsrc, p, in, t)
-					if err != nil {
-						log("Fetch resource error %v\n", err)
-						return err
-					}
+					res = append(res, *n.Node)
+					log("[%d] Resource %d/%d %#v templating result: %#v\n", depth, i+1, len(newsrcs), newsrc, string(n.Node.XML()))
 				}
+				tmpl.Node.ReplaceInner(res...)
+				log("[%d] Resource templating result: %#v\n", depth, string(tmpl.Node.XML()))
 				nodes = nil
-			}
-
-			if topath != nil && nodes != nil {
+			} else if topath != nil && nodes != nil {
 				// FIXME: set xml:base
-				matches := topath.Iter(t.Node).Nodes()
-				log("%d to matches: %#v\n", len(matches), to.Val)
+				matches := topath.Iter(tmpl.Node).Nodes()
+				log("[%d] %d to matches: %#v\n", depth, len(matches), to.Val)
 				for _, tnode := range matches {
 
 					if multi != nil && multi.Val == "true" {
-						log("Multiple (%d) templating of %#v\n", len(nodes), string(tnode.Node.XML()))
+						log("[%d] Multiple (%d) templating of %#v\n", depth, len(nodes), string(tnode.Node.XML()))
 						submap, err := p.RawContent()
 						if err != nil {
 							return err
@@ -411,31 +432,31 @@ func runTemplate(curdir, src string, p *parser.Parser, in *xmlpath.Node, t *xmlp
 							pp := parser.NewParser(bytes.NewReader(submap))
 							err = runTemplate(curdir, src, pp, &inode, n)
 							if err != nil && err != io.EOF {
-								log("Multiple templating error %v\n", err)
+								log("[%d] Multiple templating error %v\n", depth, err)
 								return err
 							}
 							tnode.Node.InsertBefore(*n.Node)
-							log("Multiple templating result %d: %#v\n", i, string(n.Node.XML()))
+							log("[%d] Multiple templating result %d: %#v\n", depth, i, string(n.Node.XML()))
 						}
 						tnode.Node.Remove()
 
 					} else if tnode.Node.Kind() == xmlpath.StartNode {
-						log("Set %d children\n", len(nodes))
+						log("[%d] Set %d children\n", depth, len(nodes))
 						for i := range nodes {
-							log("--> %#v\n", string(nodes[i].XML()))
+							log("[%d] --> %#v\n", depth, string(nodes[i].XML()))
 						}
 						tnode.Node.SetChildren(nodes...)
-						log("==> %#v\n", string(tnode.Node.XML()))
+						log("[%d] ==> %#v\n", depth, string(tnode.Node.XML()))
 
 					} else {
-						log("Convert %d nodes to text\n", len(nodes))
+						log("[%d] Convert %d nodes to text\n", depth, len(nodes))
 						tnode.Node.SetBytes(nodesToText(nodes))
 					}
 
 				}
-				log("\nMaping Result: %#v\n", string(t.Node.XML()))
+				log("\n[%d] Maping Result: %#v\n", depth, string(tmpl.Node.XML()))
 			} else {
-				log("\nMapping Aborted\n")
+				log("\n[%d] Mapping Aborted\n", depth)
 			}
 		}
 	}
@@ -445,6 +466,14 @@ func nodesToText(nodes []xmlpath.Node) []byte {
 	var data []byte
 	for _, inode := range nodes {
 		data = append(data, inode.String()...)
+	}
+	return data
+}
+
+func nodesToSlice(nodes []xmlpath.Node) []string {
+	var data []string
+	for _, inode := range nodes {
+		data = append(data, inode.String())
 	}
 	return data
 }

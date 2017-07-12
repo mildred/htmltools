@@ -341,6 +341,23 @@ func (n *Node) Replace(nodes ...Node) {
 	refresh(nodelist)
 }
 
+func (n *Node) ReplaceInner(nodes ...Node) {
+	if n.kind != StartNode {
+		panic(fmt.Sprintf("ReplaceInside in %v", n.kind))
+	}
+	var nodelist, nodelist2 []Node
+	nodelist = append(nodelist, n.nodes[:n.pos+1]...)
+	for _, nn := range nodes {
+		nodelist2 = append(nodelist2, nn.extract()...)
+	}
+	for i := range nodelist2 {
+		nodelist2[i].Ref = nil
+	}
+	nodelist = append(nodelist, nodelist2...)
+	nodelist = append(nodelist, n.nodes[n.end:]...)
+	refresh(nodelist)
+}
+
 func (n *Node) InsertBefore(nodes ...Node) {
 	var nodelist, nodelist2 []Node
 	nodelist = append(nodelist, n.nodes[:n.pos]...)
