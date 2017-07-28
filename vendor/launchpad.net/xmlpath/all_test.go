@@ -5,6 +5,7 @@ import (
 	"encoding/xml"
 	. "launchpad.net/gocheck"
 	"launchpad.net/xmlpath"
+	"log"
 	"testing"
 )
 
@@ -15,6 +16,26 @@ func Test(t *testing.T) {
 var _ = Suite(&BasicSuite{})
 
 type BasicSuite struct{}
+
+func (s *BasicSuite) TestInsertAndRemove(c *C) {
+	node_, err := xmlpath.Parse(bytes.NewBuffer([]byte(`<r><x>1</x><a><x>2</x></a><x>3</x></r>`)))
+	node := node_.Ref
+	c.Assert(err, IsNil)
+	pathA := xmlpath.MustCompile("//a")
+	pathX := xmlpath.MustCompile("//x")
+	a := pathA.Iter(node.Node).Nodes()[0]
+	xx := pathX.Iter(node.Node).Nodes()
+	log.Print(a.Node.XML())
+	c.Assert(string(a.Node.XML()), Equals, "<a><x>2</x></a>")
+	c.Assert(len(xx), Equals, 3)
+	c.Assert(string(xx[0].Node.XML()), Equals, "<x>1</x>")
+	c.Assert(string(xx[1].Node.XML()), Equals, "<x>3</x>")
+	c.Assert(string(xx[2].Node.XML()), Equals, "<x>2</x>")
+	xx[0].Node.Remove()
+	a.Node.InsertFirstChild(xx[0].Node)
+	log.Print(string(node.Node.XML()))
+	c.Assert(string(node.Node.XML()), Equals, "<r><a><x>1</x><x>2</x></a><x>3</x></r>")
+}
 
 var trivialXml = []byte(`<root>a<foo>b</foo>c<bar>d</bar>e<bar>f</bar>g</root>`)
 
@@ -98,7 +119,10 @@ func (s *BasicSuite) TestLibraryTable(c *C) {
 type cerror string
 type exists bool
 
-var libraryTable = []struct{ path string; result interface{} }{
+var libraryTable = []struct {
+	path   string
+	result interface{}
+}{
 	// These are the examples in the package documentation:
 	{"/library/book/isbn", "0836217462"},
 	{"library/*/isbn", "0836217462"},
@@ -195,7 +219,6 @@ var libraryTable = []struct{ path string; result interface{} }{
 	{"//self::comment()", []string{" Great book. ", " Another great book. "}},
 	{`comment("")`, cerror(`.*: comment\(\) has no arguments`)},
 
-
 	// Processing instructions.
 	{`/library/book/author/processing-instruction()`, `"go rocks"`},
 	{`/library/book/author/processing-instruction("echo")`, `"go rocks"`},
@@ -217,7 +240,7 @@ var libraryTable = []struct{ path string; result interface{} }{
 }
 
 var libraryXml = []byte(
-`<?xml version="1.0"?> 
+	`<?xml version="1.0"?> 
 <library>
   <!-- Great book. -->
   <book id="b0836217462" available="true">
@@ -311,7 +334,9 @@ func (s *BasicSuite) BenchmarkSimplePathString(c *C) {
 
 func (s *BasicSuite) BenchmarkSimplePathStringUnmarshal(c *C) {
 	// For a vague comparison.
-	var result struct{ Str string `xml:"reservationSet>item>instancesSet>item>instanceType"` }
+	var result struct {
+		Str string `xml:"reservationSet>item>instancesSet>item>instanceType"`
+	}
 	for i := 0; i < c.N; i++ {
 		xml.Unmarshal(instancesXml, &result)
 	}
@@ -332,10 +357,8 @@ func (s *BasicSuite) BenchmarkSimplePathExists(c *C) {
 	c.Assert(exists, Equals, true)
 }
 
-
-
 var instancesXml = []byte(
-`<DescribeInstancesResponse xmlns="http://ec2.amazonaws.com/doc/2011-12-15/">
+	`<DescribeInstancesResponse xmlns="http://ec2.amazonaws.com/doc/2011-12-15/">
   <requestId>98e3c9a4-848c-4d6d-8e8a-b1bdEXAMPLE</requestId>
   <reservationSet>
     <item>

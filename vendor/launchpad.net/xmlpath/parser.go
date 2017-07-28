@@ -65,6 +65,26 @@ const (
 	ProcInstNode
 )
 
+func (n *Node) Parent() *Node {
+	return n.up
+}
+
+func (n *Node) InsertFirstChild(cn *Node) {
+	if len(n.down) == 0 {
+		n.ReplaceInner(*cn)
+	} else {
+		n.down[0].InsertBefore(*cn)
+	}
+}
+
+func (n *Node) InsertLastChild(cn *Node) {
+	if len(n.down) == 0 {
+		n.ReplaceInner(*cn)
+	} else {
+		n.down[len(n.down)-1].InsertAfter(*cn)
+	}
+}
+
 func (n *Node) Copy() *Node {
 	nodes := append([]Node{}, n.extract()...)
 	for i := range nodes {
@@ -260,10 +280,12 @@ func (node *Node) String() string {
 }
 
 func CreateTextNode(text []byte) Node {
-	return Node{
-		kind: TextNode,
-		text: text,
-	}
+	return *refresh([]Node{
+		Node{
+			kind: TextNode,
+			text: text,
+		},
+	})
 }
 
 func (n *Node) numattributes() int {
@@ -603,6 +625,9 @@ func refresh(nodes []Node) *Node {
 			}
 			if node.kind == StartNode {
 				stack = append(stack, node)
+			}
+			if len(stack) == 0 {
+				return node
 			}
 
 		case EndNode:

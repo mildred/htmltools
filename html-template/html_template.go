@@ -6,6 +6,8 @@ import (
 	"github.com/jehiah/go-strftime"
 	"github.com/mildred/htmltools/parser"
 	"github.com/mildred/htmltools/relurl"
+	"sort"
+	"strings"
 	"time"
 	//"golang.org/x/net/html"
 	"bytes"
@@ -237,7 +239,8 @@ func evalTemplate(curdir, src string, sf io.Reader, template, mapping, raw []byt
 		}
 	}
 
-	err = runTemplate(curdir, src, p, in, t)
+	var sortk SortKeys
+	err = runTemplate(curdir, src, p, in, t, &sortk)
 	if err != nil && err != io.EOF {
 		logv("Error: %#v\n", err)
 		return nil, err
@@ -246,7 +249,66 @@ func evalTemplate(curdir, src string, sf io.Reader, template, mapping, raw []byt
 	return t.Node.XML(), nil
 }
 
-func runTemplate(curdir, src string, p *parser.Parser, in *xmlpath.Node, tmpl *xmlpath.NodeRef) error {
+type SortKey struct {
+	Asc bool
+	Key string
+}
+
+type SortKeys struct {
+	Keys []SortKey
+	Node *xmlpath.NodeRef
+}
+
+func (self SortKeys) key(i int) *SortKey {
+	if i >= len(self.Keys) {
+		return nil
+	} else {
+		return &self.Keys[i]
+	}
+}
+
+func (self SortKeys) less(other SortKeys) bool {
+	for i := 0; i < len(self.Keys) || i < len(other.Keys); i++ {
+		sk := self.key(i)
+		ok := other.key(i)
+		var asc bool
+		var sks, oks string
+		if sk != nil && ok != nil {
+			asc = sk.Asc
+			if ok.Asc != sk.Asc {
+				panic("sort order undefined")
+			}
+			sks = sk.Key
+			oks = ok.Key
+		} else if sk != nil {
+			asc = sk.Asc
+			sks = sk.Key
+		} else if ok != nil {
+			asc = ok.Asc
+			oks = ok.Key
+		} else {
+			continue
+		}
+		c := strings.Compare(sks, oks)
+		if c == 0 {
+			continue
+		}
+		if c < 0 {
+			return asc
+		} else if c > 0 {
+			return !asc
+		}
+	}
+	return false
+}
+
+type ByKey []SortKeys
+
+func (s ByKey) Len() int           { return len(s) }
+func (s ByKey) Swap(a, b int)      { s[a], s[b] = s[b], s[a] }
+func (s ByKey) Less(a, b int) bool { return s[a].less(s[b]) }
+
+func runTemplate(curdir, src string, p *parser.Parser, in *xmlpath.Node, tmpl *xmlpath.NodeRef, sortk *SortKeys) error {
 	depth := p.Depth()
 
 	log("\n[%d] Templating in file %#v\nfrom source data: %#v\nusing template: %#v\n\n", depth, string(src), string(in.XML()), string(tmpl.Node.XML()))
@@ -264,10 +326,47 @@ func runTemplate(curdir, src string, p *parser.Parser, in *xmlpath.Node, tmpl *x
 			return err
 		}
 
-		if p.IsStartTag() && p.Data() == "map" {
+		var namespaces map[string]string = nil
+		// FIXME: namespaces
+
+		if p.IsStartTag() && p.Data() == "sort" {
+			var s SortKey
+			var pathStr string
+			asc := p.AttrVal("asc", "")
+			desc := p.AttrVal("desc", "")
+			format := p.AttrVal("format", "")
+			if asc != "" && desc == "" {
+				s.Asc = true
+				pathStr = asc
+			} else if asc == "" && desc != "" {
+				s.Asc = false
+				pathStr = desc
+			} else {
+				continue
+			}
+
+			path, err := xmlpath.CompileNS(pathStr, namespaces)
+			if err != nil {
+				return err
+			}
+
+			nodes := path.Iter(in).Nodes()
+
+			if format != "" {
+				nodes, err = formatNodes(curdir, src, format, nodes, p)
+				if err != nil {
+					return err
+				}
+			}
+
+			s.Key = string(nodesToText(nodes))
+
+			if s.Key != "" {
+				sortk.Keys = append(sortk.Keys, s)
+			}
+
+		} else if p.IsStartTag() && p.Data() == "map" {
 			log("[%d] Mapping: %v\n\n", depth, string(p.Token().String()))
-			var namespaces map[string]string = nil
-			// FIXME: namespaces
 			var frompath, topath *xmlpath.Path
 			from := p.Attr("from")
 			to := p.Attr("to")
@@ -307,14 +406,14 @@ func runTemplate(curdir, src string, p *parser.Parser, in *xmlpath.Node, tmpl *x
 				}
 			}
 
-			var nodes []xmlpath.Node
+			var nodes []*xmlpath.NodeRef
 
 			if nodes == nil && frompath != nil {
 				log("[%d]   frompath: %s\n", depth, from.Val)
 				//log("  frompath: %#v\n", string(in.XML()))
 				i := frompath.Iter(in)
 				for i.Next() {
-					nodes = append(nodes, *i.Node())
+					nodes = append(nodes, i.Node().Ref)
 					log("[%d]   - %#v\n", depth, string(i.Node().XML()))
 				}
 				log("[%d]   frompath: %s (%d results)\n", depth, from.Val, len(nodes))
@@ -322,43 +421,16 @@ func runTemplate(curdir, src string, p *parser.Parser, in *xmlpath.Node, tmpl *x
 
 			if nodes == nil && dataattr != nil && dataattr.Val == "relative-url" {
 				n := xmlpath.CreateTextNode([]byte(src))
-				nodes = append(nodes, n)
+				nodes = append(nodes, n.Ref)
 			} else if nodes == nil && dataattr != nil && dataattr.Val == "relative-dir" {
 				n := xmlpath.CreateTextNode([]byte(filepath.Dir(src) + "/"))
-				nodes = append(nodes, n)
+				nodes = append(nodes, n.Ref)
 			}
 
 			if format != nil {
-				switch format.Val {
-				default:
-					log("[%d]   unknown format %#v, aborting mapping\n", depth, format.Val)
-					nodes = nil
-					break
-				case "text":
-					nodes = []xmlpath.Node{xmlpath.CreateTextNode(nodesToText(nodes))}
-					break
-				case "link-relative":
-					data, err := relurl.UrlJoinString(filepath.Dir(src), string(nodesToText(nodes)), curdir)
-					if err != nil {
-						return err
-					}
-					log("[%d]   convert to relative link: %#v\n", depth, string(data))
-					nodes = []xmlpath.Node{xmlpath.CreateTextNode([]byte(data))}
-					break
-				case "datetime":
-					input := string(nodesToText(nodes))
-					if input == "" {
-						break
-					}
-					t, err := time.Parse(time.RFC3339, input)
-					if err != nil {
-						return err
-					}
-					format := p.AttrVal("strftime", "%c")
-					data := strftime.Format(format, t)
-					log("[%d]   convert to time (%s): %#v\n", depth, format, string(data))
-					nodes = []xmlpath.Node{xmlpath.CreateTextNode([]byte(data))}
-					break
+				nodes, err = formatNodes(curdir, src, format.Val, nodes, p)
+				if err != nil {
+					return err
 				}
 			}
 
@@ -370,7 +442,7 @@ func runTemplate(curdir, src string, p *parser.Parser, in *xmlpath.Node, tmpl *x
 					return err
 				}
 
-				var res []xmlpath.Node
+				var sortedNodes []SortKeys
 
 				for i, newsrc := range newsrcs {
 					log("[%d]   fetch %#v\n", depth, newsrc)
@@ -385,6 +457,7 @@ func runTemplate(curdir, src string, p *parser.Parser, in *xmlpath.Node, tmpl *x
 					log("[%d]   file: %#v\n", depth, newsrcfile)
 
 					n := tmpl.Node.Copy().Ref
+					var sort2 SortKeys
 					err = func() error {
 						sf, err := os.Open(newsrcfile)
 						if err != nil {
@@ -397,7 +470,7 @@ func runTemplate(curdir, src string, p *parser.Parser, in *xmlpath.Node, tmpl *x
 						}
 
 						pp := parser.NewParser(bytes.NewReader(submap))
-						err = runTemplate(curdir, newsrc, pp, in, n)
+						err = runTemplate(curdir, newsrc, pp, in, n, &sort2)
 						if err != nil && err != io.EOF {
 							log("[%d] Fetch resource error: %v\n", depth, err)
 							return err
@@ -407,8 +480,15 @@ func runTemplate(curdir, src string, p *parser.Parser, in *xmlpath.Node, tmpl *x
 					if err != nil {
 						return err
 					}
-					res = append(res, *n.Node)
+					sort2.Node = n
+					sortedNodes = append(sortedNodes, sort2)
 					log("[%d] Resource %d/%d %#v templating result: %#v\n", depth, i+1, len(newsrcs), newsrc, string(n.Node.XML()))
+				}
+				sort.Stable(ByKey(sortedNodes))
+
+				var res []xmlpath.Node
+				for _, n := range sortedNodes {
+					res = append(res, *n.Node.Node)
 				}
 				tmpl.Node.ReplaceInner(res...)
 				log("[%d] Resource templating result: %#v\n", depth, string(tmpl.Node.XML()))
@@ -425,27 +505,37 @@ func runTemplate(curdir, src string, p *parser.Parser, in *xmlpath.Node, tmpl *x
 						if err != nil {
 							return err
 						}
+						var sortedNodes []SortKeys
 						for i, inode := range nodes {
 							n := tnode.Node.Copy().Ref
 							//log("Insert %#v\n", string(n.Node.XML()))
 							//log(" before %#v\n", string(tnode.Node.XML()))
 							pp := parser.NewParser(bytes.NewReader(submap))
-							err = runTemplate(curdir, src, pp, &inode, n)
+							var sort2 SortKeys
+							err = runTemplate(curdir, src, pp, inode.Node, n, &sort2)
 							if err != nil && err != io.EOF {
 								log("[%d] Multiple templating error %v\n", depth, err)
 								return err
 							}
-							tnode.Node.InsertBefore(*n.Node)
+							sort2.Node = n
+							sortedNodes = append(sortedNodes, sort2)
 							log("[%d] Multiple templating result %d: %#v\n", depth, i, string(n.Node.XML()))
+						}
+						sort.Stable(ByKey(sortedNodes))
+						for _, n := range sortedNodes {
+							tnode.Node.InsertBefore(*n.Node.Node)
 						}
 						tnode.Node.Remove()
 
 					} else if tnode.Node.Kind() == xmlpath.StartNode {
 						log("[%d] Set %d children\n", depth, len(nodes))
+						var children []xmlpath.Node
 						for i := range nodes {
-							log("[%d] --> %#v\n", depth, string(nodes[i].XML()))
+							log("[%d] --> %#v\n", depth, nodes[i])
+							log("[%d] --> %#v\n", depth, string(nodes[i].Node.XML()))
+							children = append(children, *nodes[i].Node)
 						}
-						tnode.Node.SetChildren(nodes...)
+						tnode.Node.SetChildren(children...)
 						log("[%d] ==> %#v\n", depth, string(tnode.Node.XML()))
 
 					} else {
@@ -462,18 +552,60 @@ func runTemplate(curdir, src string, p *parser.Parser, in *xmlpath.Node, tmpl *x
 	}
 }
 
-func nodesToText(nodes []xmlpath.Node) []byte {
+type AttrsInterface interface {
+	AttrVal(name, defVal string) string
+}
+
+func formatNodes(curdir, src, format string, nodes []*xmlpath.NodeRef, attrs AttrsInterface) ([]*xmlpath.NodeRef, error) {
+	log("format nodes before %s %#v\n", format, nodes)
+	switch format {
+	default:
+		log("   unknown format %#v, aborting mapping\n", format)
+		nodes = nil
+		break
+	case "text":
+		nodes = []*xmlpath.NodeRef{xmlpath.CreateTextNode(nodesToText(nodes)).Ref}
+		break
+	case "link-relative":
+		data, err := relurl.UrlJoinString(filepath.Dir(src), string(nodesToText(nodes)), curdir)
+		if err != nil {
+			return nil, err
+		}
+		log("   convert to relative link: %#v\n", string(data))
+		nodes = []*xmlpath.NodeRef{xmlpath.CreateTextNode([]byte(data)).Ref}
+		break
+	case "datetime":
+		input := string(nodesToText(nodes))
+		if input == "" {
+			break
+		}
+		t, err := time.Parse(time.RFC3339, input)
+		if err != nil {
+			return nil, err
+		}
+		format := attrs.AttrVal("strftime", "%c")
+		data := strftime.Format(format, t)
+		log("   convert to time (%s): %#v\n", format, string(data))
+		nodes = []*xmlpath.NodeRef{xmlpath.CreateTextNode([]byte(data)).Ref}
+		break
+	}
+	log("format nodes after %#v\n", nodes)
+	return nodes, nil
+}
+
+func nodesToText(nodes []*xmlpath.NodeRef) []byte {
 	var data []byte
 	for _, inode := range nodes {
-		data = append(data, inode.String()...)
+		//log("text for %s: %s\n", string(inode.Node.XML()), string(inode.Node.String()))
+		data = append(data, inode.Node.String()...)
 	}
 	return data
 }
 
-func nodesToSlice(nodes []xmlpath.Node) []string {
+func nodesToSlice(nodes []*xmlpath.NodeRef) []string {
 	var data []string
 	for _, inode := range nodes {
-		data = append(data, inode.String())
+		data = append(data, inode.Node.String())
 	}
 	return data
 }
