@@ -69,6 +69,32 @@ func (n *Node) Parent() *Node {
 	return n.up
 }
 
+func (n *Node) Children() []*Node {
+	return n.down
+}
+
+func (n *Node) PreviousSibling() *Node {
+	if n.Kind() == EndNode && n.end != n.pos {
+		return n.nodes[n.end].PreviousSibling()
+	}
+	if n.pos == 0 || n.nodes[n.pos-1].up != n.up {
+		return nil
+	} else {
+		return n.nodes[n.pos-1].Ref.Node
+	}
+}
+
+func (n *Node) NextSibling() *Node {
+	if n.Kind() == StartNode && n.end != n.pos {
+		return n.nodes[n.end].NextSibling()
+	}
+	if n.pos+1 >= len(n.nodes) || n.nodes[n.pos+1].up != n.up {
+		return nil
+	} else {
+		return n.nodes[n.pos+1].Ref.Node
+	}
+}
+
 func (n *Node) InsertFirstChild(cn *Node) {
 	if len(n.down) == 0 {
 		n.ReplaceInner(*cn)
@@ -156,6 +182,10 @@ func (n *Node) namespaces(ns map[string]string) map[string]string {
 	}
 
 	return res
+}
+
+func (n *Node) Name() xml.Name {
+	return n.name
 }
 
 // ns0: map[nstag]nsuri

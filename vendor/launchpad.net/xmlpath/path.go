@@ -456,7 +456,7 @@ func CompileNS(path string, ns map[string]string) (*Path, error) {
 		ns[""] = ""
 	}
 	ns["xml"] = "http://www.w3.org/XML/1998/namespace"
-	p, err := c.parsePath(ns)
+	p, err := c.parsePath(ns) // TODO: parse function calls before
 	if err != nil {
 		return nil, err
 	}
@@ -663,7 +663,7 @@ func (c *pathCompiler) parseExprLeaf(ns map[string]string) (pred expr, err error
 		}
 		pred = &exprInt{ival}
 	} else {
-		path, err := c.parsePath(ns)
+		path, err := c.parsePath(ns) // should include function expressions
 		if err != nil {
 			return nil, err
 		}
@@ -673,11 +673,12 @@ func (c *pathCompiler) parseExprLeaf(ns map[string]string) (pred expr, err error
 			}
 		}
 		if c.skipByte('=') {
+			// TODO: here rval should be a generic path (including function calls)
 			sval, err := c.parseLiteral()
 			if err != nil {
 				return nil, c.errorf("%v", err)
 			}
-			pred = &exprOpEq{path, sval}
+			pred = &exprOpEq{path, sval} // TODO: sval should be rval, a path expr
 		} else {
 			pred = &exprPath{path}
 		}

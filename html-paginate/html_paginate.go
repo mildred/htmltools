@@ -337,6 +337,7 @@ func createPage(in *xmlpath.NodeRef, forPath, inPath *xmlpath.Path, page []int, 
 	}
 	if head != nil {
 		args := fileNameArgs(meta.srcfile, meta.template, meta.index)
+		head.Node.InsertLastChild(metaNode("pagination", "true"))
 		if meta.index < 0 {
 			head.Node.InsertLastChild(metaNode("pagination.latest", "latest"))
 		} else {
@@ -364,7 +365,10 @@ func createPage(in *xmlpath.NodeRef, forPath, inPath *xmlpath.Path, page []int, 
 			a.idx = strconv.Itoa(i)
 			a.num = strconv.Itoa(i + 1)
 			head.Node.InsertLastChild(linkNode("rel",
-				fmt.Sprintf("pagination.page.%d", i+1),
+				fmt.Sprintf("pagination.page.idx.%d", i),
+				expandFileName(a)))
+			head.Node.InsertLastChild(linkNode("rel",
+				fmt.Sprintf("pagination.page.num.%d", i+1),
 				expandFileName(a)))
 		}
 		head.Node.InsertLastChild(linkNode("rel", "pagination.page.latest", meta.srcfile))
